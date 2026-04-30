@@ -18,16 +18,21 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
       - name: Set Up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
+
       - name: Install Dependencies
-        run: yarn install
+        run: yarn install --immutable
+
       - name: Compile TypeScript
         run: yarn tsc
+
       - name: Run Unit Tests
         run: yarn test:all
+
       - name: Build the application
         run: yarn build:all
 
@@ -37,54 +42,55 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-      - name: Set Up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Install Dependencies
-        run: yarn install
-      - name: Build the application
-        run: yarn build:all
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
+
       - name: Install GKE auth plugin
         run: gcloud components install gke-gcloud-auth-plugin --quiet
+
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GKE_REGION }}-docker.pkg.dev
+
+      - name: Ensure Artifact Registry repo exists
+        run: |
+          gcloud artifacts repositories describe ${{ env.REPO }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --location=${{ secrets.GKE_REGION }} \
+            >/dev/null 2>&1 || \
+          gcloud artifacts repositories create ${{ env.REPO }} \
+            --repository-format=docker \
+            --location=${{ secrets.GKE_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
       - name: Build Docker image
         run: |
           docker build --no-cache \
-          -t ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }} \
-          -f packages/backend/Dockerfile .
-      - name: Ensure Artifact Registry repo exists
-  run: |
-    gcloud artifacts repositories describe ${{ env.REPO }} \
-      --project=${{ secrets.GCP_PROJECT_ID }} \
-      --location=${{ secrets.GKE_REGION }} \
-      >/dev/null 2>&1 || \
-    gcloud artifacts repositories create ${{ env.REPO }} \
-      --repository-format=docker \
-      --location=${{ secrets.GKE_REGION }} \
-      --project=${{ secrets.GCP_PROJECT_ID }}
+            -t ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }} \
+            -f packages/backend/Dockerfile .
+
       - name: Push image to Artifact Registry
         run: |
           docker push ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }}
+
       - name: Get GKE cluster credentials
         run: |
-          gcloud container clusters get-credentials \
-          ${{ secrets.GKE_CLUSTER }} \
-          --region ${{ secrets.GKE_REGION }}
+          gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER }} \
+            --region ${{ secrets.GKE_REGION }}
+
       - name: Deploy to Kubernetes
         run: |
           kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/deployment.yaml
           kubectl set image deployment/backstage \
-          backstage=${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }} \
-          -n backstage
+            backstage=${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }} \
+            -n backstage
+          kubectl rollout status deployment/backstage -n backstage --timeout=300s
           kubectl get pods -n backstage
