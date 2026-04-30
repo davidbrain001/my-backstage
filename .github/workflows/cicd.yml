@@ -61,15 +61,16 @@ jobs:
           docker build --no-cache \
           -t ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }} \
           -f packages/backend/Dockerfile .
-      - name: Create Artifact Registry repo if not exists
-        run: |
-          gcloud artifacts repositories describe ${{ env.REPO }} \
-            --project=${{ secrets.GCP_PROJECT_ID }} \
-            --location=${{ secrets.GKE_REGION }} || \
-          gcloud artifacts repositories create ${{ env.REPO }} \
-            --repository-format=docker \
-            --location=${{ secrets.GKE_REGION }} \
-            --project=${{ secrets.GCP_PROJECT_ID }}
+      - name: Ensure Artifact Registry repo exists
+  run: |
+    gcloud artifacts repositories describe ${{ env.REPO }} \
+      --project=${{ secrets.GCP_PROJECT_ID }} \
+      --location=${{ secrets.GKE_REGION }} \
+      >/dev/null 2>&1 || \
+    gcloud artifacts repositories create ${{ env.REPO }} \
+      --repository-format=docker \
+      --location=${{ secrets.GKE_REGION }} \
+      --project=${{ secrets.GCP_PROJECT_ID }}
       - name: Push image to Artifact Registry
         run: |
           docker push ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }}
