@@ -7,9 +7,11 @@ permissions:
 on:
   push:
     branches: [ "k8s" ]
+  pull_request:
+    branches: [ "k8s" ]
 
 env:
-  REPO: backstage-ayo
+  REPO: my-backstage
   IMAGE: backstage
 
 jobs:
@@ -22,10 +24,10 @@ jobs:
       - name: Set Up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Install Dependencies
-        run: yarn install --immutable
+        run: yarn install
 
       - name: Compile TypeScript
         run: yarn tsc
@@ -43,6 +45,17 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Set Up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Dependencies
+        run: yarn install
+
+      - name: Build the application
+        run: yarn build:all
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -58,39 +71,38 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GKE_REGION }}-docker.pkg.dev
 
-      - name: Ensure Artifact Registry repo exists
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          -t ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:$GITHUB_SHA \
+          -f packages/backend/Dockerfile .
+
+      - name: Create Artifact Registry repo if not exists
         run: |
           gcloud artifacts repositories describe ${{ env.REPO }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
-            --location=${{ secrets.GKE_REGION }} \
-            >/dev/null 2>&1 || \
+            --location=${{ secrets.GKE_REGION }} || \
           gcloud artifacts repositories create ${{ env.REPO }} \
             --repository-format=docker \
             --location=${{ secrets.GKE_REGION }} \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Build Docker image
-        run: |
-          docker build --no-cache \
-            -t ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }} \
-            -f packages/backend/Dockerfile .
-
       - name: Push image to Artifact Registry
         run: |
-          docker push ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:$GITHUB_SHA
 
       - name: Get GKE cluster credentials
         run: |
-          gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER }} \
-            --region ${{ secrets.GKE_REGION }}
+          gcloud container clusters get-credentials \
+          ${{ secrets.GKE_CLUSTER }} \
+          --region ${{ secrets.GKE_REGION }}
 
       - name: Deploy to Kubernetes
         run: |
           kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
           kubectl set image deployment/backstage \
-            backstage=${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }} \
-            -n backstage
-          kubectl rollout status deployment/backstage -n backstage --timeout=300s
+          backstage=${{ secrets.GKE_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE }}:${{ github.sha }} \
+          -n backstage
           kubectl get pods -n backstage
