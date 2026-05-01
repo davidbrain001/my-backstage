@@ -54,10 +54,10 @@
 #       rules:
 #         - allow: [User, Group]
 app:
-  baseUrl: http://YOUR_EXTERNAL_IP
+  baseUrl: http://35.203.145.111
 
 backend:
-  baseUrl: http://YOUR_EXTERNAL_IP
+  baseUrl: http://35.203.145.111
   listen: ':7007'
   database:
     client: better-sqlite3
